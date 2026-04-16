@@ -6,7 +6,7 @@ A REST API that accepts a name and returns a rich profile by aggregating data fr
 
 ## Live URL
 
-> `https://your-deployed-url.com`
+> `https://name-profiler-production.up.railway.app/`
 
 ---
 
