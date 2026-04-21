@@ -7,7 +7,6 @@ class Profile(Base):
     name = Column(String, unique= True)
     gender = Column(String)
     gender_probability = Column(Float)
-    sample_size = Column(Integer)
     age = Column(Integer)
     age_group = Column(String)
     country_id = Column(String)

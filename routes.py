@@ -55,7 +55,6 @@ async def create_profile(profile_request: ProfileRequest, db: Session= Depends(g
         name=name,
         gender = genderize["gender"],
         gender_probability = genderize["probability"],
-        sample_size = genderize["count"],
         age = agify["age"],
         age_group = age_class,
         country_id = country_id,
@@ -95,9 +94,13 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
             "id": profile.id,
             "name": profile.name,
             "gender": profile.gender,
+            "gender_probability": profile.gender_probability,
             "age": profile.age,
             "age_group": profile.age_group,
-            "country_id": profile.country_id
+            "country_id": profile.country_id,
+            "country_name": profile.country_name,
+            "country_probability": profile.country_probability,
+            "created_at": profile.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
         }
         output.append(data)
 
@@ -105,7 +108,7 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
         status_code=200,
         content={
             "status": "success",
-            "count": count,
+            "total": count,
             "data": output,
         }
     )

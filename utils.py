@@ -4,7 +4,6 @@ def format_full_profile(profile):
                 "name": profile.name,
                 "gender": profile.gender,
                 "gender_probability": profile.gender_probability,
-                "sample_size": profile.sample_size,
                 "age": profile.age,
                 "age_group": profile.age_group,
                 "country_id": profile.country_id,
