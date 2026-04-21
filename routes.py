@@ -8,7 +8,7 @@ from schemas import ProfileRequest
 from models import Profile
 from database import get_db
 from utils import format_full_profile
-from services import get_agify_data, get_genderize_data, get_nationalize_data, choose_country, classify_age
+from services import get_agify_data, get_genderize_data, get_nationalize_data, choose_country, classify_age, get_country_name
 
 router = APIRouter(prefix="/api/profiles")
 
@@ -47,6 +47,8 @@ async def create_profile(profile_request: ProfileRequest, db: Session= Depends(g
     
     age_class = classify_age(agify["age"])
     choice_country = choose_country(nationalize["country"])
+    country_id = choice_country["country_id"]
+    country_name = get_country_name(country_id)
 
     new_profile = Profile(
         id=str(uuid6.uuid7()),            
@@ -56,7 +58,8 @@ async def create_profile(profile_request: ProfileRequest, db: Session= Depends(g
         sample_size = genderize["count"],
         age = agify["age"],
         age_group = age_class,
-        country_id = choice_country["country_id"],
+        country_id = country_id,
+        country_name = country_name,
         country_probability = choice_country["probability"],
         created_at=datetime.now(timezone.utc)
     )
@@ -126,7 +129,6 @@ def get_profile(id: str, db: Session= Depends(get_db)):
             "data": format_full_profile(profile)
         }
     )
-
 
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_profile(id: str, db: Session = Depends(get_db)):

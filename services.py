@@ -1,4 +1,5 @@
 import httpx
+import pycountry
 
 async def get_genderize_data(name):
     async with httpx.AsyncClient() as client:
@@ -25,10 +26,14 @@ def classify_age(age):
     else:
         return "child"
 
-
 def choose_country(country_list):
     return max(country_list, key=lambda c: c["probability"])
 
-
+def get_country_name(country_id):
+    country = pycountry.countries.get(alpha_2=country_id)
+    if country:
+        return country.name
+    else:
+        return country_id
 
 

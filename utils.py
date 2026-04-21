@@ -8,6 +8,7 @@ def format_full_profile(profile):
                 "age": profile.age,
                 "age_group": profile.age_group,
                 "country_id": profile.country_id,
+                "country_name": profile.country_name,
                 "country_probability": profile.country_probability,
                 "created_at": profile.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
             }
