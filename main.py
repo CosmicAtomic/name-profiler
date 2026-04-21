@@ -180,7 +180,7 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
     for profile in profiles:
         count += 1
         data = {
-            "id": f"id-{count}",
+            "id": profile.id,
             "name": profile.name,
             "gender": profile.gender,
             "age": profile.age,
