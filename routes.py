@@ -75,7 +75,7 @@ async def create_profile(profile_request: ProfileRequest, db: Session= Depends(g
     )
 
 @router.get('')
-def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, db: Session= Depends(get_db)):
+def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, db: Session= Depends(get_db)):
     query = db.query(Profile)
     if gender:
         query = query.filter(Profile.gender == gender.lower())
@@ -83,6 +83,14 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
         query = query.filter(Profile.country_id == country_id.upper())
     if age_group:
         query = query.filter(Profile.age_group == age_group.lower())
+    if min_age is not None:
+        query = query.filter(Profile.age >= min_age)
+    if max_age is not None:
+        query = query.filter(Profile.age <= max_age)
+    if min_gender_probability is not None:
+        query = query.filter(Profile.gender_probability >= min_gender_probability)
+    if min_country_probability is not None:
+        query = query.filter(Profile.country_probability >= min_country_probability)
     profiles = query.all()
 
     
@@ -112,7 +120,6 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
             "data": output,
         }
     )
-
 
 
 @router.get("/{id}")

@@ -27,10 +27,16 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 status_code=400,
                 content={"status": "error", "message": "Missing or empty name"}
             )
+        if error["type"] in ("int_parsing", "float_parsing"):
+            return JSONResponse(
+                status_code=422,
+                content={"status": "error", "message": "Invalid query parameters"}
+            )
     return JSONResponse(
         status_code=422,
         content={"status": "error", "message": "Invalid type"}
     )
+
 
 @app.get('/')
 def test():
