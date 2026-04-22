@@ -81,7 +81,8 @@ async def create_profile(profile_request: ProfileRequest, db: Session= Depends(g
     )
 
 @router.get('')
-def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, sort_by: Optional[str] = None, order: Optional[str] = None, db: Session= Depends(get_db)):
+def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, sort_by: Optional[str] = None, order: Optional[str] = None, page:int = 1, limit:int = 10, db: Session= Depends(get_db)):
+
     if sort_by is not None and sort_by.lower() not in ("age", "created_at", "gender_probability"):
         return JSONResponse(
             status_code=422,
@@ -94,6 +95,8 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
         )
     
     order = (order or "asc").lower()
+    limit = min(limit, 50)
+    skip = (page-1) * limit
   
     query = db.query(Profile)
     if gender:
@@ -111,37 +114,24 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
     if min_country_probability is not None:
         query = query.filter(Profile.country_probability >= min_country_probability)
 
+    total = query.count()
     sort_column = SORT_FIELD.get(sort_by, Profile.created_at)
     if order == "desc":
         query = query.order_by(sort_column.desc())
     else:
         query = query.order_by(sort_column.asc())
 
-    profiles = query.all()
+    profiles = query.offset(skip).limit(limit)
 
-    output = []
-    count = 0
-    for profile in profiles:
-        count += 1
-        data = {
-            "id": profile.id,
-            "name": profile.name,
-            "gender": profile.gender,
-            "gender_probability": profile.gender_probability,
-            "age": profile.age,
-            "age_group": profile.age_group,
-            "country_id": profile.country_id,
-            "country_name": profile.country_name,
-            "country_probability": profile.country_probability,
-            "created_at": profile.created_at.strftime("%Y-%m-%dT%H:%M:%SZ")
-        }
-        output.append(data)
+    output = [format_full_profile(profile) for profile in profiles]
 
     return JSONResponse(
         status_code=200,
         content={
             "status": "success",
-            "total": count,
+            "page": page,
+            "limit": limit,
+            "total": total,
             "data": output,
         }
     )
