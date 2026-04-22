@@ -12,6 +12,12 @@ from services import get_agify_data, get_genderize_data, get_nationalize_data, c
 
 router = APIRouter(prefix="/api/profiles")
 
+SORT_FIELD = {
+    "age": Profile.age,
+    "created_at": Profile.created_at,
+    "gender_probability": Profile.gender_probability
+}
+
 @router.post('')
 async def create_profile(profile_request: ProfileRequest, db: Session= Depends(get_db)):
     name = profile_request.name
@@ -75,7 +81,20 @@ async def create_profile(profile_request: ProfileRequest, db: Session= Depends(g
     )
 
 @router.get('')
-def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, db: Session= Depends(get_db)):
+def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, sort_by: Optional[str] = None, order: Optional[str] = None, db: Session= Depends(get_db)):
+    if sort_by is not None and sort_by.lower() not in ("age", "created_at", "gender_probability"):
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
+    if order is not None and order.lower() not in ("asc", "desc"):
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
+    
+    order = (order or "asc").lower()
+  
     query = db.query(Profile)
     if gender:
         query = query.filter(Profile.gender == gender.lower())
@@ -91,9 +110,15 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
         query = query.filter(Profile.gender_probability >= min_gender_probability)
     if min_country_probability is not None:
         query = query.filter(Profile.country_probability >= min_country_probability)
+
+    sort_column = SORT_FIELD.get(sort_by, Profile.created_at)
+    if order == "desc":
+        query = query.order_by(sort_column.desc())
+    else:
+        query = query.order_by(sort_column.asc())
+
     profiles = query.all()
 
-    
     output = []
     count = 0
     for profile in profiles:
