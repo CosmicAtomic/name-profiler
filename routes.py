@@ -9,6 +9,7 @@ from models import Profile
 from database import get_db
 from utils import format_full_profile
 from services import get_agify_data, get_genderize_data, get_nationalize_data, choose_country, classify_age, get_country_name
+from query_parser import parse_query
 
 router = APIRouter(prefix="/api/profiles")
 
@@ -136,6 +137,52 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
         }
     )
 
+
+@router.get('/search')
+def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db)):
+    if not q:
+        return JSONResponse (
+            status_code=400,
+            content={"status": "error", "message": "Search query cannot be empty"}
+        )
+    
+    filter = parse_query(q)
+    if not filter:
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Unable to interpret query"}
+        )
+    
+    query = db.query(Profile)
+    if filter.get("gender"):
+        query = query.filter(Profile.gender == filter["gender"])
+    if filter.get("age_group"):
+        query = query.filter(Profile.age_group == filter["age_group"])
+    if filter.get("min_age") is not None:
+        query = query.filter(Profile.age >= filter["min_age"])
+    if filter.get("max_age") is not None:
+        query = query.filter(Profile.age <= filter["max_age"])
+    if filter.get("country_id"):
+        query = query.filter(Profile.country_id == filter["country_id"])
+
+    total = query.count()
+    limit = min(limit, 50)
+    skip = (page-1) * limit
+
+    profiles = query.offset(skip).limit(limit)
+
+    output = [format_full_profile(profile) for profile in profiles]
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "status": "success",
+            "page": page,
+            "limit": limit,
+            "total": total,
+            "data": output,
+        }
+    )
 
 @router.get("/{id}")
 def get_profile(id: str, db: Session= Depends(get_db)):
