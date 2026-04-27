@@ -1,4 +1,7 @@
+import io
 import uuid6
+import math
+import csv
 from typing import Optional
 from fastapi.responses import JSONResponse
 from datetime import datetime, timezone
@@ -7,12 +10,12 @@ from sqlalchemy.orm import Session
 from schemas import ProfileRequest
 from models import Profile
 from database import get_db
-from utils import format_full_profile
+from utils import format_full_profile, get_page_links
 from services import get_agify_data, get_genderize_data, get_nationalize_data, choose_country, classify_age, get_country_name
 from query_parser import parse_query
-from auth import get_current_user, require_role
+from auth import get_current_user, require_role, check_api_version
 
-profile_router = APIRouter(prefix="/api/profiles")
+profile_router = APIRouter(prefix="/api/profiles", dependencies=[Depends(check_api_version)])
 
 SORT_FIELD = {
     "age": Profile.age,
@@ -126,6 +129,7 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
     profiles = query.offset(skip).limit(limit)
 
     output = [format_full_profile(profile) for profile in profiles]
+    total_pages = math.ceil(total/limit)
 
     return JSONResponse(
         status_code=200,
@@ -134,10 +138,76 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
             "page": page,
             "limit": limit,
             "total": total,
+            "total_pages": total_pages,
+            "links": get_page_links(page, limit, total_pages),
             "data": output,
         }
     )
 
+@profile_router.get('/export')
+def export_profiles_csv(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, sort_by: Optional[str] = None, order: Optional[str] = None, db: Session= Depends(get_db), current_user = Depends(get_current_user)):
+
+    if sort_by is not None and sort_by.lower() not in ("age", "created_at", "gender_probability"):
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
+    if order is not None and order.lower() not in ("asc", "desc"):
+        return JSONResponse(
+            status_code=422,
+            content={"status": "error", "message": "Invalid query parameters"}
+        )
+    
+    order = (order or "asc").lower()
+  
+    query = db.query(Profile)
+    if gender:
+        query = query.filter(Profile.gender == gender.lower())
+    if country_id:
+        query = query.filter(Profile.country_id == country_id.upper())
+    if age_group:
+        query = query.filter(Profile.age_group == age_group.lower())
+    if min_age is not None:
+        query = query.filter(Profile.age >= min_age)
+    if max_age is not None:
+        query = query.filter(Profile.age <= max_age)
+    if min_gender_probability is not None:
+        query = query.filter(Profile.gender_probability >= min_gender_probability)
+    if min_country_probability is not None:
+        query = query.filter(Profile.country_probability >= min_country_probability)
+
+    total = query.count()
+    sort_column = SORT_FIELD.get(sort_by, Profile.created_at)
+    if order == "desc":
+        query = query.order_by(sort_column.desc())
+    else:
+        query = query.order_by(sort_column.asc())
+
+
+    profiles = [format_full_profile(profile) for profile in query]
+
+    # 2. Build CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    # Header
+    writer.writerow(["id", "name", "gender", "gender_probability", "age", "age_group", "country_id", "country_name", "country_probability", "created_at"])
+    
+    for p in profiles:
+        writer.writerow([
+            p["id"], p["name"], p["gender"], p["gender_probability"], 
+            p["age"], p["age_group"], p["country_id"], p["country_name"], 
+            p["country_probability"], p["created_at"]
+        ])
+        
+    # 3. Return Response
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return Response(
+        content=output.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=profiles_{timestamp}.csv"
+        }
+    ) 
 
 @profile_router.get('/search')
 def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db), current_user = Depends(get_current_user)):
@@ -169,6 +239,7 @@ def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db), c
     total = query.count()
     limit = min(limit, 50)
     skip = (page-1) * limit
+    total_pages =math.ceil(total/limit)
 
     profiles = query.offset(skip).limit(limit)
 
@@ -181,6 +252,8 @@ def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db), c
             "page": page,
             "limit": limit,
             "total": total,
+            "total_pages": total_pages,
+            "links": get_page_links(page, limit, total_pages),
             "data": output,
         }
     )

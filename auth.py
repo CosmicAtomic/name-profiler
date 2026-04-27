@@ -56,3 +56,8 @@ def require_role(role: str):
             raise HTTPException(status_code=403, detail="Insufficient Permissions")
         return current_user
     return role_checker
+
+def check_api_version(request: Request):
+    header = request.headers.get("X-API-Version")
+    if not header or header != '1':
+        raise HTTPException(status_code=400, detail={"status": "error", "message": "API version header required"})
