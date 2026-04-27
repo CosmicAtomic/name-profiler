@@ -25,3 +25,12 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     last_login_at = Column(DateTime)
     created_at = Column(DateTime)
+
+class Refresh_Token(Base):
+    __tablename__ = "refresh_tokens"
+    id = Column(String, primary_key=True)
+    token = Column(String, unique=True)
+    user_id = Column(String)
+    is_used = Column(Boolean, default=False)
+    expires_at= Column(DateTime)
+    created_at = Column(DateTime)

@@ -10,3 +10,6 @@ class ProfileRequest(BaseModel):
         if not v:
             raise ValueError("name must not be empty")
         return v
+    
+class RefreshRequest(BaseModel):
+    refresh_token: str

@@ -11,7 +11,7 @@ from utils import format_full_profile
 from services import get_agify_data, get_genderize_data, get_nationalize_data, choose_country, classify_age, get_country_name
 from query_parser import parse_query
 
-router = APIRouter(prefix="/api/profiles")
+profile_router = APIRouter(prefix="/api/profiles")
 
 SORT_FIELD = {
     "age": Profile.age,
@@ -19,7 +19,7 @@ SORT_FIELD = {
     "gender_probability": Profile.gender_probability
 }
 
-@router.post('')
+@profile_router.post('')
 async def create_profile(profile_request: ProfileRequest, db: Session= Depends(get_db)):
     name = profile_request.name
     existing_profile = db.query(Profile).filter(Profile.name == name).first()
@@ -81,7 +81,7 @@ async def create_profile(profile_request: ProfileRequest, db: Session= Depends(g
         }
     )
 
-@router.get('')
+@profile_router.get('')
 def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, sort_by: Optional[str] = None, order: Optional[str] = None, page:int = 1, limit:int = 10, db: Session= Depends(get_db)):
 
     if sort_by is not None and sort_by.lower() not in ("age", "created_at", "gender_probability"):
@@ -138,7 +138,7 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
     )
 
 
-@router.get('/search')
+@profile_router.get('/search')
 def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db)):
     if not q:
         return JSONResponse (
@@ -184,7 +184,7 @@ def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db)):
         }
     )
 
-@router.get("/{id}")
+@profile_router.get("/{id}")
 def get_profile(id: str, db: Session= Depends(get_db)):
     profile = db.query(Profile).filter(Profile.id == id).first()
     
@@ -202,7 +202,7 @@ def get_profile(id: str, db: Session= Depends(get_db)):
         }
     )
 
-@router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@profile_router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_profile(id: str, db: Session = Depends(get_db)):
     profile = db.query(Profile).filter(Profile.id == id).first()
     if not profile:
