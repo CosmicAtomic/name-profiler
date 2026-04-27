@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float,DateTime
+from sqlalchemy import Column, Integer, String, Float,DateTime, Boolean
 from database import Base
 
 class Profile(Base):
@@ -12,4 +12,16 @@ class Profile(Base):
     country_id = Column(String)
     country_name = Column(String)
     country_probability = Column(Float)
+    created_at = Column(DateTime)
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(String, primary_key= True)
+    github_id = Column(String, unique=True)
+    username = Column(String)
+    email = Column(String)
+    avatar_url = Column(String)
+    role = Column(String)
+    is_active = Column(Boolean, default=True)
+    last_login_at = Column(DateTime)
     created_at = Column(DateTime)
