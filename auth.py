@@ -1,6 +1,11 @@
 import os
 import jwt
 from datetime import datetime, timezone, timedelta
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+from fastapi import Request, HTTPException, Depends
+from database import get_db
+from models import User
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -31,3 +36,23 @@ def verify_token(token):
         return None
     except jwt.InvalidTokenError:
         return None
+
+def get_current_user(request: Request, db: Session = Depends(get_db)):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Token not found")
+    token = auth_header.split(" ")[1]
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="Token is expired or invalid")
+    user = db.query(User).filter(User.id == payload["user_id"]).first()
+    if not user or not user.is_active:
+        raise HTTPException(status_code=403, detail="Access denied")
+    return user
+
+def require_role(role: str):
+    def role_checker(current_user = Depends(get_current_user)):
+        if current_user.role != role:
+            raise HTTPException(status_code=403, detail="Insufficient Permissions")
+        return current_user
+    return role_checker

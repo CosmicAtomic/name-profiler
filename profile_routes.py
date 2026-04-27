@@ -10,6 +10,7 @@ from database import get_db
 from utils import format_full_profile
 from services import get_agify_data, get_genderize_data, get_nationalize_data, choose_country, classify_age, get_country_name
 from query_parser import parse_query
+from auth import get_current_user, require_role
 
 profile_router = APIRouter(prefix="/api/profiles")
 
@@ -20,7 +21,7 @@ SORT_FIELD = {
 }
 
 @profile_router.post('')
-async def create_profile(profile_request: ProfileRequest, db: Session= Depends(get_db)):
+async def create_profile(profile_request: ProfileRequest, db: Session= Depends(get_db), current_user = Depends(require_role("admin"))):
     name = profile_request.name
     existing_profile = db.query(Profile).filter(Profile.name == name).first()
     if existing_profile:
@@ -82,7 +83,7 @@ async def create_profile(profile_request: ProfileRequest, db: Session= Depends(g
     )
 
 @profile_router.get('')
-def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, sort_by: Optional[str] = None, order: Optional[str] = None, page:int = 1, limit:int = 10, db: Session= Depends(get_db)):
+def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None, age_group: Optional[str] = None, min_age: Optional[int] = None, max_age: Optional[int] = None, min_gender_probability: Optional[float] = None, min_country_probability: Optional[float] = None, sort_by: Optional[str] = None, order: Optional[str] = None, page:int = 1, limit:int = 10, db: Session= Depends(get_db), current_user = Depends(get_current_user)):
 
     if sort_by is not None and sort_by.lower() not in ("age", "created_at", "gender_probability"):
         return JSONResponse(
@@ -139,7 +140,7 @@ def get_profiles(gender: Optional[str] = None, country_id: Optional[str] = None,
 
 
 @profile_router.get('/search')
-def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db)):
+def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db), current_user = Depends(get_current_user)):
     if not q:
         return JSONResponse (
             status_code=400,
@@ -185,7 +186,7 @@ def search(q: str, page:int = 1, limit:int = 10, db: Session= Depends(get_db)):
     )
 
 @profile_router.get("/{id}")
-def get_profile(id: str, db: Session= Depends(get_db)):
+def get_profile(id: str, db: Session= Depends(get_db), current_user = Depends(get_current_user)):
     profile = db.query(Profile).filter(Profile.id == id).first()
     
     if not profile:
@@ -203,7 +204,7 @@ def get_profile(id: str, db: Session= Depends(get_db)):
     )
 
 @profile_router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_profile(id: str, db: Session = Depends(get_db)):
+def delete_profile(id: str, db: Session = Depends(get_db), current_user = Depends(require_role("admin"))):
     profile = db.query(Profile).filter(Profile.id == id).first()
     if not profile:
         return JSONResponse(

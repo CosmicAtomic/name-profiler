@@ -73,7 +73,6 @@ async def github_callback(code: str, state: str, db: Session = Depends(get_db)):
     github_id = str(github_user.get("id"))
 
     user = db.query(User).filter(User.github_id == github_id).first()
-
     if user:
         user.last_login_at = datetime.now(timezone.utc)
     else:
