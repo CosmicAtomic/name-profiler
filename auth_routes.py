@@ -18,7 +18,7 @@ pending_states = {}
 
 CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID")
 CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET")
-CALL_BACK_URL = "http://localhost:8000/auth/github/callback"
+CALL_BACK_URL = os.environ.get("CALLBACK_URL", "http://localhost:8000/auth/github/callback")
 
 auth_router = APIRouter(prefix='/auth')
 
