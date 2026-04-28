@@ -227,7 +227,7 @@ http://yourfrontend.com/callback?access_token=...&refresh_token=...&username=...
 ## Related Repositories
 
 - **CLI Tool:** [insighta-cli](https://github.com/CosmicAtomic/insighta-cli) — Terminal interface for all API operations
-- **Web Portal:** [insighta-web](https://github.com/CosmicAtomic/insighta-web) — Browser-based dashboard (link TBD)
+- **Web Portal:** [insighta-web](https://github.com/CosmicAtomic/insighta-web) — Browser-based dashboard at https://insighta-lab.netlify.app/
 
 Both clients authenticate through this backend via GitHub OAuth and consume the same API endpoints.
 
