@@ -3,12 +3,12 @@ import requests
 import uuid6
 import secrets, base64, hashlib
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import RedirectResponse, JSONResponse
 from sqlalchemy.orm import Session
 from database import get_db
 from models import User, Refresh_Token
-from auth import create_access_token, create_refresh_token, verify_token
+from auth import create_access_token, create_refresh_token, verify_token, get_current_user
 from schemas import RefreshRequest
 from dotenv import load_dotenv
 load_dotenv()
@@ -22,13 +22,16 @@ CALL_BACK_URL = "http://localhost:8000/auth/github/callback"
 auth_router = APIRouter(prefix='/auth')
 
 @auth_router.get('/github')
-async def auth_github():
+async def auth_github(redirect_to: str = None):
     state = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
     challenge_bytes = hashlib.sha256(code_verifier.encode('utf-8')).digest()
     code_challenge = base64.urlsafe_b64encode(challenge_bytes).decode('utf-8').rstrip('=')
 
-    pending_states[state] = code_verifier
+    pending_states[state] = {
+        "code_verifier": code_verifier,
+        "redirect_to": redirect_to
+    }
 
     github_url = (
         f"https://github.com/login/oauth/authorize"
@@ -44,10 +47,12 @@ async def auth_github():
 
 @auth_router.get("/github/callback")
 async def github_callback(code: str, state: str, db: Session = Depends(get_db)):
-    code_verifier = pending_states.pop(state, None)
-    if not code_verifier:
+    state_data = pending_states.pop(state, None)
+    if not state_data:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
+    code_verifier = state_data["code_verifier"]
+    redirect_to = state_data.get("redirect_to")
     token_url = "https://github.com/login/oauth/access_token"
     token_data = {
         "client_id": CLIENT_ID,
@@ -103,6 +108,11 @@ async def github_callback(code: str, state: str, db: Session = Depends(get_db)):
     db.add(db_token)
     db.commit()
 
+    if redirect_to:
+        return RedirectResponse(
+            f"{redirect_to}?access_token={access_token}&refresh_token={refresh_token}&username={user.username}"
+        )
+
     return JSONResponse({
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -151,3 +161,16 @@ async def auth_logout(request_body: RefreshRequest, db: Session = Depends(get_db
     db.commit()
     return JSONResponse({"status": "success", "message": "Logged out"})
 
+@auth_router.get('/me')
+async def auth_me(request: Request, db: Session = Depends(get_db)):
+    user = get_current_user(request, db)
+    return JSONResponse({
+        "status": "success",
+        "data": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "avatar_url": user.avatar_url
+        }
+    })

@@ -13,3 +13,7 @@ class ProfileRequest(BaseModel):
     
 class RefreshRequest(BaseModel):
     refresh_token: str
+
+class TokenExchangeRequest(BaseModel):
+    code: str
+    code_verifier: str
