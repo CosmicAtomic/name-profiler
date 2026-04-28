@@ -49,7 +49,7 @@ async def auth_github(request: Request, redirect_to: str = None):
 
 @auth_router.get("/github/callback")
 @limiter.limit("10/minute")
-async def github_callback(code: str, state: str, db: Session = Depends(get_db)):
+async def github_callback(request: Request, code: str, state: str, db: Session = Depends(get_db)):
     state_data = pending_states.pop(state, None)
     if not state_data:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
