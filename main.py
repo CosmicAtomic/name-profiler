@@ -1,23 +1,51 @@
+import time
+import logging
 from fastapi import FastAPI, Depends, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from limiter import limiter
 from profile_routes import profile_router
 from database import Base, engine
 from auth_routes import auth_router
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
+logger = logging.getLogger(__name__)
+
 app = FastAPI()
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = round((time.time() - start) * 1000, 2)
+    logger.info(f"{request.method} {request.url.path} → {response.status_code} ({duration}ms)")
+    return response
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       
-    allow_credentials=True,     
-    allow_methods=["*"],         
-    allow_headers=["*"],         
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 Base.metadata.create_all(bind=engine)
 
+app.state.limiter = limiter
+
+async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"status": "error", "message": "Too many requests. Please try again later."}
+    )
+
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 app.include_router(profile_router)
 app.include_router(auth_router)

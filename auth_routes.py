@@ -10,6 +10,7 @@ from database import get_db
 from models import User, Refresh_Token
 from auth import create_access_token, create_refresh_token, verify_token, get_current_user
 from schemas import RefreshRequest
+from limiter import limiter
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -22,7 +23,8 @@ CALL_BACK_URL = "http://localhost:8000/auth/github/callback"
 auth_router = APIRouter(prefix='/auth')
 
 @auth_router.get('/github')
-async def auth_github(redirect_to: str = None):
+@limiter.limit("10/minute")
+async def auth_github(request: Request, redirect_to: str = None):
     state = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
     challenge_bytes = hashlib.sha256(code_verifier.encode('utf-8')).digest()
@@ -46,6 +48,7 @@ async def auth_github(redirect_to: str = None):
 
 
 @auth_router.get("/github/callback")
+@limiter.limit("10/minute")
 async def github_callback(code: str, state: str, db: Session = Depends(get_db)):
     state_data = pending_states.pop(state, None)
     if not state_data:
@@ -120,7 +123,8 @@ async def github_callback(code: str, state: str, db: Session = Depends(get_db)):
     })
 
 @auth_router.post('/refresh')
-async def auth_refresh(request_body: RefreshRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+async def auth_refresh(request: Request, request_body: RefreshRequest, db: Session = Depends(get_db)):
     payload = verify_token(request_body.refresh_token)
     if not payload:
         return JSONResponse(status_code=401, content={"status": "error", "message": "Token is expired or invalid"})
@@ -153,7 +157,8 @@ async def auth_refresh(request_body: RefreshRequest, db: Session = Depends(get_d
     })
 
 @auth_router.post('/logout')
-async def auth_logout(request_body: RefreshRequest, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+async def auth_logout(request: Request, request_body: RefreshRequest, db: Session = Depends(get_db)):
     stored_token = db.query(Refresh_Token).filter(Refresh_Token.token == request_body.refresh_token).first()
     if not stored_token:
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid token"})
@@ -162,6 +167,7 @@ async def auth_logout(request_body: RefreshRequest, db: Session = Depends(get_db
     return JSONResponse({"status": "success", "message": "Logged out"})
 
 @auth_router.get('/me')
+@limiter.limit("10/minute")
 async def auth_me(request: Request, db: Session = Depends(get_db)):
     user = get_current_user(request, db)
     return JSONResponse({
