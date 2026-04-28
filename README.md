@@ -1,6 +1,6 @@
 # Name Profiler API
 
-A REST API that accepts a name and returns a rich demographic profile by aggregating data from three public APIs — gender prediction, age estimation, and nationality inference. Profiles are persisted in a PostgreSQL database and exposed through a set of endpoints that support filtering, sorting, pagination, and natural language search.
+A REST API that accepts a name and returns a rich demographic profile by aggregating data from three public APIs — gender prediction, age estimation, and nationality inference. Profiles are persisted in a PostgreSQL database and exposed through a set of authenticated endpoints that support filtering, sorting, pagination, natural language search, and CSV export.
 
 ---
 
@@ -17,8 +17,53 @@ A REST API that accepts a name and returns a rich demographic profile by aggrega
 - **PostgreSQL** (production) / SQLite (local fallback)
 - **Pydantic** (request validation)
 - **httpx** (async HTTP client)
+- **PyJWT** (token encoding and verification)
 - **uuid6** (UUID v7 generation)
 - **pycountry** (country name and code lookup)
+
+---
+
+## System Architecture
+
+The application is split into focused modules, each with a single responsibility:
+
+```
+main.py              — App entry point: registers routers, middleware, and exception handlers
+database.py          — SQLAlchemy engine, session factory, and get_db dependency
+models.py            — ORM table definitions (Profile, User, Refresh_Token)
+schemas.py           — Pydantic request/response models
+services.py          — External API calls (Genderize, Agify, Nationalize) and helper functions
+utils.py             — Response formatters and pagination link builder
+query_parser.py      — Rule-based natural language query parser
+auth.py              — JWT utilities, get_current_user dependency, require_role guard
+profile_routes.py    — All /api/profiles endpoints
+auth_routes.py       — All /auth endpoints (OAuth, token refresh, logout, /me)
+seed.py              — Database seeding script
+```
+
+**Request lifecycle (protected route):**
+
+```
+Client Request
+    → X-API-Version header check (check_api_version)
+    → Authorization header parsed (get_current_user)
+    → JWT verified, user fetched from DB
+    → Role checked if required (require_role)
+    → Route handler executes
+    → JSONResponse returned
+```
+
+**Data flow for profile creation:**
+
+```
+POST /api/profiles
+    → Genderize.io  → gender + probability
+    → Agify.io      → age
+    → Nationalize.io → country list → highest probability country selected
+    → age classified into group (child / teenager / adult / senior)
+    → country code resolved to full name via pycountry
+    → Profile saved to DB with UUID v7
+```
 
 ---
 
@@ -57,13 +102,16 @@ pip install -r requirements.txt
 
 ### 4. Set up environment variables
 
-Create a `.env` file in the project root:
+Copy `.env.example` to `.env` and fill in your values:
 
 ```env
 DATABASE_URL=postgresql://username:password@localhost:5432/name_profiler
+GITHUB_CLIENT_ID=your_github_oauth_app_client_id
+GITHUB_CLIENT_SECRET=your_github_oauth_app_client_secret
+JWT_SECRET_KEY=some_long_random_string
 ```
 
-If no `.env` is provided, the app falls back to a local SQLite database (`sql_app.db`).
+If `DATABASE_URL` is not set, the app falls back to a local SQLite database (`sql_app.db`).
 
 ### 5. Start the server
 
@@ -75,21 +123,239 @@ The API will be available at `http://localhost:8000`.
 
 ---
 
-## Seeding the Database
+## CLI Usage
 
-A seed script is included to pre-populate the database with 2026 demographic profiles. It skips any names that already exist, so it is safe to run multiple times.
+All protected endpoints require two headers on every request:
 
-```bash
-python seed.py
+```
+X-API-Version: 1
+Authorization: Bearer <access_token>
 ```
 
-The seed data is loaded from `seed_profiles.json`. Make sure your `DATABASE_URL` environment variable points to the correct database before running.
+**Authenticate and get tokens:**
+```bash
+# Visit in browser — redirects to GitHub
+GET /auth/github
+```
+
+**Use the access token:**
+```bash
+curl -H "X-API-Version: 1" \
+     -H "Authorization: Bearer <access_token>" \
+     https://name-profiler-production.up.railway.app/api/profiles
+```
+
+**Refresh an expired access token:**
+```bash
+curl -X POST https://name-profiler-production.up.railway.app/auth/refresh \
+     -H "Content-Type: application/json" \
+     -d '{"refresh_token": "<refresh_token>"}'
+```
+
+**Logout:**
+```bash
+curl -X POST https://name-profiler-production.up.railway.app/auth/logout \
+     -H "Content-Type: application/json" \
+     -d '{"refresh_token": "<refresh_token>"}'
+```
+
+**Get current user info:**
+```bash
+curl -H "X-API-Version: 1" \
+     -H "Authorization: Bearer <access_token>" \
+     https://name-profiler-production.up.railway.app/auth/me
+```
+
+**Export profiles as CSV:**
+```bash
+curl -H "X-API-Version: 1" \
+     -H "Authorization: Bearer <access_token>" \
+     "https://name-profiler-production.up.railway.app/api/profiles/export?gender=female&age_group=adult" \
+     -o profiles.csv
+```
+
+---
+
+## Seeding the Database
+
+```bash
+DATABASE_URL=your_database_url python seed.py
+```
+
+The script loads 2026 profiles from `seed_profiles.json`. It checks existing names before inserting, so it is safe to run multiple times.
+
+---
+
+## Authentication Flow
+
+Authentication is handled via GitHub OAuth. No passwords are stored.
+
+```
+1. Client visits GET /auth/github
+      → Server generates a random state token and PKCE code verifier
+      → Both are stored in memory keyed by state
+      → Client is redirected to GitHub's authorization page
+
+2. GitHub redirects back to GET /auth/github/callback?code=...&state=...
+      → Server validates the state matches a known pending request
+      → Server exchanges the code + code_verifier for a GitHub access token
+      → Server calls GET https://api.github.com/user to fetch profile data
+
+3. User lookup / creation
+      → If github_id exists in users table: update last_login_at
+      → If not: create new user with role = "analyst"
+
+4. Token issuance
+      → Access token generated (JWT, 3 min expiry)
+      → Refresh token generated (JWT, 5 min expiry), stored in refresh_tokens table
+      → Both returned to client (JSON or redirect with tokens in query params)
+```
+
+**Redirect flow** (for frontend clients):
+
+```
+GET /auth/github?redirect_to=http://yourfrontend.com/callback
+```
+
+After login, the server redirects to:
+```
+http://yourfrontend.com/callback?access_token=...&refresh_token=...&username=...
+```
+
+---
+
+## Related Repositories
+
+- **CLI Tool:** [insighta-cli](https://github.com/CosmicAtomic/insighta-cli) — Terminal interface for all API operations
+- **Web Portal:** [insighta-web](https://github.com/CosmicAtomic/insighta-web) — Browser-based dashboard (link TBD)
+
+Both clients authenticate through this backend via GitHub OAuth and consume the same API endpoints.
+
+---
+
+## Token Handling Approach
+
+The API uses two JWTs per session — a short-lived access token and a longer-lived refresh token.
+
+**Access token:**
+- Signed with `HS256` using `JWT_SECRET_KEY`
+- Payload: `{ user_id, role, exp, iat }`
+- Expires in **3 minutes**
+- Sent in the `Authorization: Bearer <token>` header on every request
+- Never stored in the database
+
+**Refresh token:**
+- Signed with `HS256` using the same key
+- Payload: `{ user_id, exp, iat }`
+- Expires in **5 minutes**
+- Stored in the `refresh_tokens` table with an `is_used` flag
+- One-time use — marked `is_used = True` immediately on use
+
+**Token refresh flow:**
+1. Client sends `POST /auth/refresh` with the refresh token in the request body
+2. Server verifies the JWT signature and expiry
+3. Server checks the token exists in the DB and `is_used = False`
+4. Old token is marked used, new access + refresh tokens are issued and stored
+5. Client replaces both tokens
+
+**Logout:**
+- Client sends `POST /auth/logout` with the refresh token
+- Server marks it `is_used = True`
+- The access token is stateless so it remains valid until it naturally expires (max 3 minutes)
+
+---
+
+## Role Enforcement Logic
+
+Every user is assigned one of two roles at account creation:
+
+| Role | Assigned | Permissions |
+|------|----------|-------------|
+| `analyst` | Default for all new GitHub logins | Read-only access — can list, search, filter, export, and view profiles |
+| `admin` | Manually assigned in the database | Full access — all analyst permissions plus create and delete profiles |
+
+**How it works in code:**
+
+All `/api/profiles` routes require the `X-API-Version: 1` header and a valid JWT (`check_api_version` runs as a router-level dependency before any route handler).
+
+Individual routes then layer their own auth:
+
+```
+GET  /api/profiles          → get_current_user  (analyst or admin)
+GET  /api/profiles/export   → get_current_user  (analyst or admin)
+GET  /api/profiles/search   → get_current_user  (analyst or admin)
+GET  /api/profiles/{id}     → get_current_user  (analyst or admin)
+POST /api/profiles          → require_role("admin")
+DELETE /api/profiles/{id}   → require_role("admin")
+```
+
+`get_current_user` extracts the Bearer token, verifies it, fetches the user from the database, and confirms `is_active = True`. `require_role` wraps `get_current_user` and additionally checks that `user.role` matches the required role — returning 403 if it does not.
+
+---
+
+## API Endpoints
+
+### Auth
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/auth/github` | None | Initiates GitHub OAuth login |
+| `GET` | `/auth/github/callback` | None | GitHub OAuth callback |
+| `POST` | `/auth/refresh` | None | Exchange refresh token for new tokens |
+| `POST` | `/auth/logout` | None | Invalidate a refresh token |
+| `GET` | `/auth/me` | Bearer token | Get current user info |
+
+### Profiles
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `POST` | `/api/profiles` | Admin | Create a new profile |
+| `GET` | `/api/profiles` | Any user | List profiles with filtering, sorting, pagination |
+| `GET` | `/api/profiles/export` | Any user | Export filtered profiles as CSV |
+| `GET` | `/api/profiles/search` | Any user | Natural language search |
+| `GET` | `/api/profiles/{id}` | Any user | Get a single profile by ID |
+| `DELETE` | `/api/profiles/{id}` | Admin | Delete a profile |
+
+All profile endpoints require the `X-API-Version: 1` header.
+
+---
+
+### `GET /api/profiles` — Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `gender` | string | `male` or `female` |
+| `country_id` | string | ISO 3166-1 alpha-2 code (e.g. `NG`) |
+| `age_group` | string | `child`, `teenager`, `adult`, or `senior` |
+| `min_age` | integer | Minimum age (inclusive) |
+| `max_age` | integer | Maximum age (inclusive) |
+| `min_gender_probability` | float | Minimum gender confidence score |
+| `min_country_probability` | float | Minimum country confidence score |
+| `sort_by` | string | `age`, `created_at`, or `gender_probability` |
+| `order` | string | `asc` or `desc` (default: `asc`) |
+| `page` | integer | Page number (default: 1) |
+| `limit` | integer | Results per page (default: 10, max: 50) |
+
+**Response envelope:**
+```json
+{
+  "status": "success",
+  "page": 1,
+  "limit": 10,
+  "total": 120,
+  "total_pages": 12,
+  "links": {
+    "self": "/api/profiles?page=1&limit=10",
+    "next": "/api/profiles?page=2&limit=10",
+    "prev": null
+  },
+  "data": [ "...profiles..." ]
+}
+```
 
 ---
 
 ## Age Group Classification
-
-Ages are bucketed into four groups at profile creation time using the following ranges:
 
 | Age Range | Group |
 |-----------|-------|
@@ -100,205 +366,20 @@ Ages are bucketed into four groups at profile creation time using the following 
 
 ---
 
-## API Endpoints
-
-### `POST /api/profiles`
-
-Creates a new name profile by calling the three external APIs and storing the result. If the name already exists in the database, the existing profile is returned immediately without making any API calls.
-
-**Request body:**
-```json
-{ "name": "ella" }
-```
-
-**Success — 201 Created:**
-```json
-{
-  "status": "success",
-  "data": {
-    "id": "019600a2-d3b7-7a4e-9c1f-2f8d3e6b1a05",
-    "name": "ella",
-    "gender": "female",
-    "gender_probability": 0.98,
-    "age": 34,
-    "age_group": "adult",
-    "country_id": "DK",
-    "country_name": "Denmark",
-    "country_probability": 0.21,
-    "created_at": "2026-04-22T10:00:00Z"
-  }
-}
-```
-
-**Already exists — 200 OK:**
-```json
-{
-  "status": "success",
-  "message": "Profile already exists",
-  "data": { "...existing profile..." }
-}
-```
-
----
-
-### `GET /api/profiles`
-
-Returns a paginated list of profiles. Supports filtering, sorting, and pagination via query parameters. All filters are combined with AND logic.
-
-**Query parameters (all optional):**
-
-| Parameter | Type | Description | Example |
-|-----------|------|-------------|---------|
-| `gender` | string | Filter by gender | `?gender=male` |
-| `country_id` | string | Filter by 2-letter country code | `?country_id=NG` |
-| `age_group` | string | Filter by age group | `?age_group=adult` |
-| `min_age` | integer | Minimum age (inclusive) | `?min_age=20` |
-| `max_age` | integer | Maximum age (inclusive) | `?max_age=40` |
-| `min_gender_probability` | float | Minimum gender confidence | `?min_gender_probability=0.9` |
-| `min_country_probability` | float | Minimum country confidence | `?min_country_probability=0.5` |
-| `sort_by` | string | Sort field: `age`, `created_at`, `gender_probability` | `?sort_by=age` |
-| `order` | string | Sort direction: `asc` or `desc` | `?order=desc` |
-| `page` | integer | Page number (default: 1) | `?page=2` |
-| `limit` | integer | Results per page (default: 10, max: 50) | `?limit=20` |
-
-**Success — 200 OK:**
-```json
-{
-  "status": "success",
-  "page": 1,
-  "limit": 10,
-  "total": 42,
-  "data": [
-    {
-      "id": "019600a2-d3b7-7a4e-9c1f-2f8d3e6b1a05",
-      "name": "emmanuel",
-      "gender": "male",
-      "gender_probability": 0.99,
-      "age": 25,
-      "age_group": "adult",
-      "country_id": "NG",
-      "country_name": "Nigeria",
-      "country_probability": 0.85,
-      "created_at": "2026-04-22T10:00:00Z"
-    }
-  ]
-}
-```
-
----
-
-### `GET /api/profiles/search`
-
-Searches profiles using a natural language query string. The query is parsed into structured filters which are then applied to the database.
-
-**Query parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `q` | string | Natural language search query |
-| `page` | integer | Page number (default: 1) |
-| `limit` | integer | Results per page (default: 10, max: 50) |
-
-**Example requests:**
-```
-GET /api/profiles/search?q=adult males from Nigeria
-GET /api/profiles/search?q=women older than 30
-GET /api/profiles/search?q=young females
-GET /api/profiles/search?q=senior men from Japan
-```
-
-**Success — 200 OK:**
-```json
-{
-  "status": "success",
-  "page": 1,
-  "limit": 10,
-  "total": 7,
-  "data": [ "...matching profiles..." ]
-}
-```
-
-**Uninterpretable query — 400 Bad Request:**
-```json
-{ "status": "error", "message": "Unable to interpret query" }
-```
-
----
-
-### `GET /api/profiles/{id}`
-
-Returns a single profile by its UUID.
-
-**Success — 200 OK:**
-```json
-{
-  "status": "success",
-  "data": {
-    "id": "019600a2-d3b7-7a4e-9c1f-2f8d3e6b1a05",
-    "name": "sarah",
-    "gender": "female",
-    "gender_probability": 0.97,
-    "age": 28,
-    "age_group": "adult",
-    "country_id": "US",
-    "country_name": "United States",
-    "country_probability": 0.62,
-    "created_at": "2026-04-22T10:00:00Z"
-  }
-}
-```
-
-**Not found — 404:**
-```json
-{ "status": "error", "message": "Profile not found" }
-```
-
----
-
-### `DELETE /api/profiles/{id}`
-
-Deletes a profile by its UUID.
-
-**Success — 204 No Content**
-
-**Not found — 404:**
-```json
-{ "status": "error", "message": "Profile not found" }
-```
-
----
-
-## Error Responses
-
-All errors follow this structure:
-
-```json
-{ "status": "error", "message": "<description>" }
-```
-
-| Status Code | Cause |
-|-------------|-------|
-| `400` | Missing or empty name / empty search query / uninterpretable search query |
-| `404` | Profile not found |
-| `422` | Invalid query parameter type (e.g. passing a string for `min_age`) or invalid value for `sort_by`/`order` |
-| `502` | External API returned unusable data (null gender, null age, or empty country list) |
-
----
-
 ## Natural Language Search — Parsing Approach
 
-The `/api/profiles/search` endpoint uses a **rule-based keyword scanner** — no AI or LLM is involved. The query string is inspected for known keywords and patterns, which are then mapped to database filter conditions.
+The `/api/profiles/search` endpoint uses a **rule-based keyword scanner** — no AI or LLM involved. The query is inspected for known keywords and patterns, which map to structured database filters.
 
 ### Order of Operations
 
-1. **Normalize** — the entire query is lowercased so `Female`, `FEMALE`, and `female` are all treated identically
-2. **Split into words** — the query is split on whitespace to enable word-level matching
-3. **Detect gender keywords** — scan words against known gender keyword sets
-4. **Detect age group keywords** — scan words against age group keyword sets
-5. **Handle "young"** — if no age group was found and "young" is present, apply an age range filter instead
-6. **Detect age comparison phrases** — scan the full query string (not word-by-word) for phrases like "older than 30"
-7. **Detect country** — look for the word "from" and attempt to resolve the following word as a country name
-8. **Return filters** — the collected filters dict is returned; if empty (nothing was recognized), `None` is returned and the endpoint responds with 400
+1. Lowercase the entire query
+2. Split into words for word-level matching
+3. Detect gender keywords
+4. Detect age group keywords
+5. Handle `young` (maps to age range, not age group)
+6. Detect age comparison phrases against the full query string
+7. Detect country via the word `from`
+8. Return filters dict — if empty, return `None` → 400 error
 
 ### Supported Keywords
 
@@ -309,9 +390,7 @@ The `/api/profiles/search` endpoint uses a **rule-based keyword scanner** — no
 | `male`, `males`, `men`, `man` | `gender = "male"` |
 | `female`, `females`, `women`, `woman` | `gender = "female"` |
 
-If both male and female keywords appear in the same query (e.g. "men and women"), the gender filter is skipped entirely rather than picking one arbitrarily.
-
-The female check is performed before the male check because the word "female" contains the substring "male" — checking male first would incorrectly match "females".
+If both genders appear in the same query, the gender filter is skipped. The female check runs before male because "female" contains "male".
 
 **Age groups:**
 
@@ -322,47 +401,40 @@ The female check is performed before the male check because the word "female" co
 | `adult`, `adults` | `age_group = "adult"` |
 | `senior`, `seniors`, `elderly`, `old` | `age_group = "senior"` |
 
-Only the first matched age group is applied — additional age group keywords in the same query are ignored.
-
-**"young" keyword:**
-
-`young` is not a named age group in the database. Instead, it maps to an age range filter of `min_age = 16, max_age = 24`. This only applies if no other age group keyword was detected — so "young adults" will use `age_group = "adult"` (adult wins), while "young females" will use the `16–24` age range.
+**"young":** Maps to `min_age = 16, max_age = 24`. Only applied if no other age group keyword matched — "young adults" resolves to `adult`.
 
 **Age comparisons:**
 
-| Phrase | Example | Maps to |
-|--------|---------|---------|
-| `older than` | `older than 30` | `min_age = 30` |
-| `above` | `above 25` | `min_age = 25` |
-| `over` | `over 18` | `min_age = 18` |
-| `younger than` | `younger than 20` | `max_age = 20` |
-| `below` | `below 15` | `max_age = 15` |
-| `under` | `under 30` | `max_age = 30` |
+| Pattern | Maps to |
+|---------|---------|
+| `older than N`, `above N`, `over N` | `min_age = N` |
+| `younger than N`, `below N`, `under N` | `max_age = N` |
 
-Multi-word phrases (`older than`, `younger than`) are checked before single-word ones (`above`, `over`, `below`, `under`) to avoid partial matches. Numbers are extracted using a regex that captures the digit(s) immediately following the phrase.
+**Country:** Looks for `from` in the query and resolves the next word using pycountry fuzzy search to a 2-letter country code.
 
-**Country:**
+### Limitations
 
-The parser looks for the word `from` in the query and treats the word immediately after it as a country name. It uses `pycountry`'s fuzzy search to resolve common spelling variants (e.g. `Nigeria`, `Nigerian`-adjacent spellings). If a match is found, the country's ISO 3166-1 alpha-2 code (e.g. `NG`) is used as the filter.
+- **No typo correction** for gender/age keywords — "femal" or "adut" won't match
+- **No negation** — "not from Nigeria" won't work
+- **Multi-word country names fail** — "from United States" only reads "United", not "United States"
+- **No number ranges** — "between 20 and 30" is not supported; use `min_age` + `max_age` query params instead
+- **One country at a time** — "from Nigeria or Ghana" ignores Ghana
+- **Conflicting filters** — "children older than 50" applies both `age_group = child` and `min_age = 50` simultaneously, which produces no results
+- **Unrecognized queries return 400** — if no keyword is matched at all, the endpoint returns an error rather than returning all profiles
 
 ---
 
-## Natural Language Search — Limitations
+## Error Responses
 
-The rule-based parser is intentionally simple. It covers common query patterns well, but has several known gaps:
+```json
+{ "status": "error", "message": "<description>" }
+```
 
-**Typo handling:** The fuzzy search in `pycountry` handles some near-misses (e.g. "Nigerria"), but significant misspellings will fail silently — no country filter will be applied rather than returning an error. For all other keywords (gender, age group), there is no typo tolerance at all. "femle" or "adut" will not be recognized.
-
-**Negation:** The parser has no concept of NOT. Queries like "not from Nigeria", "non-adults", or "males except seniors" will not work as expected. The negation word is ignored and the remaining keywords may still match unintentionally.
-
-**Complex sentences:** The parser does not understand sentence structure or grammar. It only looks for known keywords, so elaborate phrasings like "give me all the female profiles that are quite young" may partially work (female + young recognized) but longer or more nuanced phrasing will produce incorrect or empty filters.
-
-**"from" followed by multi-word country names:** The parser only grabs the single word immediately after "from". This means "from United States" will attempt to match "United" as a country (which may fail or match unintended results). Use single-word country names where possible, e.g. "from Nigeria", "from Japan", "from Denmark".
-
-**Number ranges:** Queries like "between 20 and 30" or "ages 25 to 40" are not supported. Only single-sided comparisons work (`older than 30`, `under 25`). For range queries, use the `GET /api/profiles` endpoint with `min_age` and `max_age` parameters directly.
-
-**Multiple countries:** Only one country can be filtered at a time. "from Nigeria or Ghana" will attempt to resolve "nigeria" as the country and ignore the rest.
-
-**Combining age group and age comparison:** If both an age group keyword and an age comparison phrase appear (e.g. "adults older than 35"), both filters are applied independently. This can produce contradictory results if the ranges don't overlap (e.g. "children older than 50" would apply `age_group = child` AND `min_age = 50` simultaneously).
-
-**Unknown keywords:** Any word not in the supported keyword sets is silently ignored. If a query contains no recognizable keywords at all, the endpoint returns a 400 error with `"Unable to interpret query"`.
+| Status Code | Cause |
+|-------------|-------|
+| `400` | Missing/empty name, uninterpretable search query, missing API version header |
+| `401` | Missing, expired, or invalid token |
+| `403` | Authenticated but insufficient role, or inactive account |
+| `404` | Profile not found |
+| `422` | Invalid query parameter type or value |
+| `502` | External API (Genderize/Agify/Nationalize) returned unusable data |
