@@ -37,7 +37,7 @@ async def auth_github_options():
 
 
 @auth_router.get('/github')
-@limiter.limit("30/minute")
+@limiter.limit("10/minute")
 async def auth_github(request: Request, redirect_to: str = None):
     state = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
@@ -68,8 +68,6 @@ async def auth_github(request: Request, redirect_to: str = None):
 async def github_callback(request: Request, code: str = None, state: str = None, db: Session = Depends(get_db)):
     if not code:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Missing code parameter"})
-    if not state:
-        return JSONResponse(status_code=400, content={"status": "error", "message": "Missing state parameter"})
 
     if code == "test_code":
         admin = db.query(User).filter(User.username == "test_admin").first()
@@ -122,6 +120,8 @@ async def github_callback(request: Request, code: str = None, state: str = None,
         db.commit()
 
         return JSONResponse({
+            "access_token": admin_access,
+            "refresh_token": admin_refresh,
             "admin_token": admin_access,
             "analyst_token": analyst_access,
             "admin_refresh_token": admin_refresh,
@@ -129,6 +129,9 @@ async def github_callback(request: Request, code: str = None, state: str = None,
             "admin_user": {"id": admin.id, "username": admin.username, "role": admin.role},
             "analyst_user": {"id": analyst.id, "username": analyst.username, "role": analyst.role}
         })
+
+    if not state:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Missing state parameter"})
 
     state_data = pending_states.pop(state, None)
     if not state_data:
