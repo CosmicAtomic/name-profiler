@@ -8,7 +8,7 @@ from slowapi.errors import RateLimitExceeded
 from limiter import limiter
 from profile_routes import profile_router
 from database import Base, engine
-from auth_routes import auth_router
+from auth_routes import auth_router, users_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,7 +30,7 @@ async def log_requests(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -42,6 +42,7 @@ app.state.limiter = limiter
 async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
     return JSONResponse(
         status_code=429,
+        headers={"Retry-After": "60"},
         content={"status": "error", "message": "Too many requests. Please try again later."}
     )
 
@@ -49,6 +50,7 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 app.include_router(profile_router)
 app.include_router(auth_router)
+app.include_router(users_router)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):

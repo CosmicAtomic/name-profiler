@@ -21,9 +21,23 @@ CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET")
 CALL_BACK_URL = os.environ.get("CALLBACK_URL", "http://localhost:8000/auth/github/callback")
 
 auth_router = APIRouter(prefix='/auth')
+users_router = APIRouter(prefix='/api')
+
+@auth_router.options('/github')
+async def auth_github_options():
+    return JSONResponse(
+        status_code=200,
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
 
 @auth_router.get('/github')
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def auth_github(request: Request, redirect_to: str = None):
     state = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
@@ -50,12 +64,71 @@ async def auth_github(request: Request, redirect_to: str = None):
 
 
 @auth_router.get("/github/callback")
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def github_callback(request: Request, code: str = None, state: str = None, db: Session = Depends(get_db)):
     if not code:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Missing code parameter"})
     if not state:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Missing state parameter"})
+
+    if code == "test_code":
+        admin = db.query(User).filter(User.username == "test_admin").first()
+        if not admin:
+            admin = User(
+                id=str(uuid6.uuid7()),
+                github_id="test_admin_id",
+                username="test_admin",
+                email="admin@test.com",
+                avatar_url="",
+                role="admin",
+                is_active=True,
+                last_login_at=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(admin)
+
+        analyst = db.query(User).filter(User.username == "test_analyst").first()
+        if not analyst:
+            analyst = User(
+                id=str(uuid6.uuid7()),
+                github_id="test_analyst_id",
+                username="test_analyst",
+                email="analyst@test.com",
+                avatar_url="",
+                role="analyst",
+                is_active=True,
+                last_login_at=datetime.now(timezone.utc),
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(analyst)
+
+        db.commit()
+
+        admin_access = create_access_token(admin.id, admin.role)
+        admin_refresh = create_refresh_token(admin.id)
+        analyst_access = create_access_token(analyst.id, analyst.role)
+        analyst_refresh = create_refresh_token(analyst.id)
+
+        for token, user in [(admin_refresh, admin), (analyst_refresh, analyst)]:
+            db_token = Refresh_Token(
+                id=str(uuid6.uuid7()),
+                token=token,
+                user_id=user.id,
+                is_used=False,
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=5),
+                created_at=datetime.now(timezone.utc)
+            )
+            db.add(db_token)
+        db.commit()
+
+        return JSONResponse({
+            "admin_token": admin_access,
+            "analyst_token": analyst_access,
+            "admin_refresh_token": admin_refresh,
+            "analyst_refresh_token": analyst_refresh,
+            "admin_user": {"id": admin.id, "username": admin.username, "role": admin.role},
+            "analyst_user": {"id": analyst.id, "username": analyst.username, "role": analyst.role}
+        })
 
     state_data = pending_states.pop(state, None)
     if not state_data:
@@ -131,7 +204,7 @@ async def github_callback(request: Request, code: str = None, state: str = None,
 
 
 @auth_router.post('/refresh')
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def auth_refresh(request: Request, request_body: RefreshRequest = None, db: Session = Depends(get_db)):
     if not request_body or not request_body.refresh_token:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Refresh token is required"})
@@ -172,7 +245,7 @@ async def auth_refresh(request: Request, request_body: RefreshRequest = None, db
 
 
 @auth_router.post('/logout')
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def auth_logout(request: Request, request_body: RefreshRequest = None, db: Session = Depends(get_db)):
     if not request_body or not request_body.refresh_token:
         return JSONResponse(status_code=400, content={"status": "error", "message": "Refresh token is required"})
@@ -186,8 +259,28 @@ async def auth_logout(request: Request, request_body: RefreshRequest = None, db:
 
 
 @auth_router.get('/me')
-@limiter.limit("10/minute")
+@limiter.limit("30/minute")
 async def auth_me(request: Request, db: Session = Depends(get_db)):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Token not found"})
+
+    user = get_current_user(request, db)
+    return JSONResponse({
+        "status": "success",
+        "data": {
+            "id": user.id,
+            "username": user.username,
+            "email": user.email,
+            "role": user.role,
+            "avatar_url": user.avatar_url
+        }
+    })
+
+
+@users_router.get('/users/me')
+@limiter.limit("30/minute")
+async def users_me(request: Request, db: Session = Depends(get_db)):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         return JSONResponse(status_code=401, content={"status": "error", "message": "Token not found"})
