@@ -1,6 +1,6 @@
 import time
 import logging
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -50,6 +50,15 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 app.include_router(profile_router)
 app.include_router(auth_router)
 
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if isinstance(exc.detail, dict):
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"status": "error", "message": str(exc.detail)}
+    )
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     for error in exc.errors():
@@ -62,6 +71,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             return JSONResponse(
                 status_code=422,
                 content={"status": "error", "message": "Invalid query parameters"}
+            )
+        if error["type"] == "missing":
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Missing required parameter"}
             )
     return JSONResponse(
         status_code=422,

@@ -44,15 +44,22 @@ async def auth_github(request: Request, redirect_to: str = None):
         f"&state={state}"
         f"&code_challenge_method=S256"
     )
-    return RedirectResponse(github_url)
+    response = RedirectResponse(github_url)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
 
 
 @auth_router.get("/github/callback")
 @limiter.limit("10/minute")
-async def github_callback(request: Request, code: str, state: str, db: Session = Depends(get_db)):
+async def github_callback(request: Request, code: str = None, state: str = None, db: Session = Depends(get_db)):
+    if not code:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Missing code parameter"})
+    if not state:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Missing state parameter"})
+
     state_data = pending_states.pop(state, None)
     if not state_data:
-        raise HTTPException(status_code=400, detail="Invalid or expired state")
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid or expired state"})
 
     code_verifier = state_data["code_verifier"]
     redirect_to = state_data.get("redirect_to")
@@ -65,14 +72,14 @@ async def github_callback(request: Request, code: str, state: str, db: Session =
         "code_verifier": code_verifier
     }
     token_headers = {"Accept": "application/json"}
-    
+
     token_resp = requests.post(token_url, data=token_data, headers=token_headers)
     token_json = token_resp.json()
     github_token = token_json.get("access_token")
 
     if not github_token:
-        raise HTTPException(status_code=400, detail="Failed to retrieve GitHub token")
-    
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Failed to retrieve GitHub token"})
+
     user_resp = requests.get(
         "https://api.github.com/user",
         headers={"Authorization": f"Bearer {github_token}"}
@@ -85,14 +92,14 @@ async def github_callback(request: Request, code: str, state: str, db: Session =
         user.last_login_at = datetime.now(timezone.utc)
     else:
         user = User(
-            id = str(uuid6.uuid7()),
-            github_id = github_id,
-            username = github_user.get("login"),
-            email = github_user.get("email"),
-            avatar_url = github_user.get("avatar_url"),
-            role = "analyst",
-            last_login_at = datetime.now(timezone.utc),
-            created_at = datetime.now(timezone.utc)
+            id=str(uuid6.uuid7()),
+            github_id=github_id,
+            username=github_user.get("login"),
+            email=github_user.get("email"),
+            avatar_url=github_user.get("avatar_url"),
+            role="analyst",
+            last_login_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc)
         )
         db.add(user)
     db.commit()
@@ -122,17 +129,24 @@ async def github_callback(request: Request, code: str, state: str, db: Session =
         "username": user.username
     })
 
+
 @auth_router.post('/refresh')
 @limiter.limit("10/minute")
-async def auth_refresh(request: Request, request_body: RefreshRequest, db: Session = Depends(get_db)):
+async def auth_refresh(request: Request, request_body: RefreshRequest = None, db: Session = Depends(get_db)):
+    if not request_body or not request_body.refresh_token:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Refresh token is required"})
+
     payload = verify_token(request_body.refresh_token)
     if not payload:
         return JSONResponse(status_code=401, content={"status": "error", "message": "Token is expired or invalid"})
-    
-    stored_token = db.query(Refresh_Token).filter(Refresh_Token.token == request_body.refresh_token, Refresh_Token.is_used == False).first()
+
+    stored_token = db.query(Refresh_Token).filter(
+        Refresh_Token.token == request_body.refresh_token,
+        Refresh_Token.is_used == False
+    ).first()
     if not stored_token:
         return JSONResponse(status_code=401, content={"status": "error", "message": "Token is expired or invalid"})
-    
+
     stored_token.is_used = True
     user = db.query(User).filter(User.id == payload["user_id"]).first()
 
@@ -156,9 +170,13 @@ async def auth_refresh(request: Request, request_body: RefreshRequest, db: Sessi
         "refresh_token": new_refresh_token
     })
 
+
 @auth_router.post('/logout')
 @limiter.limit("10/minute")
-async def auth_logout(request: Request, request_body: RefreshRequest, db: Session = Depends(get_db)):
+async def auth_logout(request: Request, request_body: RefreshRequest = None, db: Session = Depends(get_db)):
+    if not request_body or not request_body.refresh_token:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Refresh token is required"})
+
     stored_token = db.query(Refresh_Token).filter(Refresh_Token.token == request_body.refresh_token).first()
     if not stored_token:
         return JSONResponse(status_code=401, content={"status": "error", "message": "Invalid token"})
@@ -166,9 +184,14 @@ async def auth_logout(request: Request, request_body: RefreshRequest, db: Sessio
     db.commit()
     return JSONResponse({"status": "success", "message": "Logged out"})
 
+
 @auth_router.get('/me')
 @limiter.limit("10/minute")
 async def auth_me(request: Request, db: Session = Depends(get_db)):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"status": "error", "message": "Token not found"})
+
     user = get_current_user(request, db)
     return JSONResponse({
         "status": "success",

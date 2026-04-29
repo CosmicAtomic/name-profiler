@@ -15,18 +15,16 @@ def create_token(data, exp_mins):
     payload = {**data}
     payload["exp"] = datetime.now(tz=timezone.utc) + timedelta(minutes=exp_mins)
     payload["iat"] = datetime.now(tz=timezone.utc)
-    token = jwt.encode(payload=payload, key= JWT_SECRET_KEY, algorithm="HS256")
+    token = jwt.encode(payload=payload, key=JWT_SECRET_KEY, algorithm="HS256")
     return token
 
 def create_access_token(user_id, role):
     data = {"user_id": user_id, "role": role}
-    access_token = create_token(data, 3)
-    return access_token
+    return create_token(data, 3)
 
 def create_refresh_token(user_id):
     data = {"user_id": user_id}
-    refresh_token = create_token(data, 5)
-    return refresh_token
+    return create_token(data, 5)
 
 def verify_token(token):
     try:
@@ -40,24 +38,24 @@ def verify_token(token):
 def get_current_user(request: Request, db: Session = Depends(get_db)):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Token not found")
+        raise HTTPException(status_code=401, detail={"status": "error", "message": "Token not found"})
     token = auth_header.split(" ")[1]
     payload = verify_token(token)
     if not payload:
-        raise HTTPException(status_code=401, detail="Token is expired or invalid")
+        raise HTTPException(status_code=401, detail={"status": "error", "message": "Token is expired or invalid"})
     user = db.query(User).filter(User.id == payload["user_id"]).first()
     if not user or not user.is_active:
-        raise HTTPException(status_code=403, detail="Access denied")
+        raise HTTPException(status_code=403, detail={"status": "error", "message": "Access denied"})
     return user
 
 def require_role(role: str):
-    def role_checker(current_user = Depends(get_current_user)):
+    def role_checker(current_user=Depends(get_current_user)):
         if current_user.role != role:
-            raise HTTPException(status_code=403, detail="Insufficient Permissions")
+            raise HTTPException(status_code=403, detail={"status": "error", "message": "Insufficient permissions"})
         return current_user
     return role_checker
 
 def check_api_version(request: Request):
     header = request.headers.get("X-API-Version")
-    if not header or header != '1':
+    if not header or header != "1":
         raise HTTPException(status_code=400, detail={"status": "error", "message": "API version header required"})
