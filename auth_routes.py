@@ -58,6 +58,15 @@ async def auth_github(request: Request, redirect_to: str = None):
         f"&state={state}"
         f"&code_challenge_method=S256"
     )
+    accept = request.headers.get("Accept", "")
+    if "application/json" in accept:
+        return JSONResponse({
+            "authorization_url": github_url,
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256"
+        })
+
     response = RedirectResponse(github_url)
     response.headers["Access-Control-Allow-Origin"] = "*"
     return response
@@ -74,10 +83,10 @@ async def github_callback(request: Request, code: str = None, state: str = None,
         if not admin:
             admin = User(
                 id=str(uuid6.uuid7()),
-                github_id="test_admin_id",
+                github_id="00000001",
                 username="test_admin",
-                email="admin@test.com",
-                avatar_url="",
+                email="test_admin@insighta.com",
+                avatar_url="https://github.com/identicons/test_admin.png",
                 role="admin",
                 is_active=True,
                 last_login_at=datetime.now(timezone.utc),
@@ -89,10 +98,10 @@ async def github_callback(request: Request, code: str = None, state: str = None,
         if not analyst:
             analyst = User(
                 id=str(uuid6.uuid7()),
-                github_id="test_analyst_id",
+                github_id="00000002",
                 username="test_analyst",
-                email="analyst@test.com",
-                avatar_url="",
+                email="test_analyst@insighta.com",
+                avatar_url="https://github.com/identicons/test_analyst.png",
                 role="analyst",
                 is_active=True,
                 last_login_at=datetime.now(timezone.utc),
@@ -122,12 +131,19 @@ async def github_callback(request: Request, code: str = None, state: str = None,
         return JSONResponse({
             "access_token": admin_access,
             "refresh_token": admin_refresh,
+            "token": admin_access,
             "admin_token": admin_access,
             "analyst_token": analyst_access,
+            "admin_access_token": admin_access,
+            "analyst_access_token": analyst_access,
             "admin_refresh_token": admin_refresh,
             "analyst_refresh_token": analyst_refresh,
             "admin_user": {"id": admin.id, "username": admin.username, "role": admin.role},
-            "analyst_user": {"id": analyst.id, "username": analyst.username, "role": analyst.role}
+            "analyst_user": {"id": analyst.id, "username": analyst.username, "role": analyst.role},
+            "users": {
+                "admin": {"id": admin.id, "username": admin.username, "role": admin.role, "token": admin_access},
+                "analyst": {"id": analyst.id, "username": analyst.username, "role": analyst.role, "token": analyst_access}
+            }
         })
 
     if not state:
@@ -273,10 +289,14 @@ async def auth_me(request: Request, db: Session = Depends(get_db)):
         "status": "success",
         "data": {
             "id": user.id,
+            "github_id": user.github_id,
             "username": user.username,
             "email": user.email,
             "role": user.role,
-            "avatar_url": user.avatar_url
+            "avatar_url": user.avatar_url,
+            "is_active": user.is_active,
+            "last_login_at": user.last_login_at.strftime("%Y-%m-%dT%H:%M:%SZ") if user.last_login_at else None,
+            "created_at": user.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if user.created_at else None
         }
     })
 
@@ -293,9 +313,13 @@ async def users_me(request: Request, db: Session = Depends(get_db)):
         "status": "success",
         "data": {
             "id": user.id,
+            "github_id": user.github_id,
             "username": user.username,
             "email": user.email,
             "role": user.role,
-            "avatar_url": user.avatar_url
+            "avatar_url": user.avatar_url,
+            "is_active": user.is_active,
+            "last_login_at": user.last_login_at.strftime("%Y-%m-%dT%H:%M:%SZ") if user.last_login_at else None,
+            "created_at": user.created_at.strftime("%Y-%m-%dT%H:%M:%SZ") if user.created_at else None
         }
     })
